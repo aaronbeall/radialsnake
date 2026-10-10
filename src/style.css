@@ -1,0 +1,42 @@
+:root {
+  font-family: system-ui, sans-serif;
+  --page: #101c20;
+  --text: #d9e4e3;
+  --accent: #91cfc8;
+  --muted: #809597;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text); transition: background-color 1.6s, color 1.6s; }
+#app { width: min(100%, 1248px); height: 100dvh; margin: auto; padding: 16px 24px; display: flex; flex-direction: column; }
+.scores { display: flex; justify-content: space-between; gap: 24px; padding: 0 2px 14px; color: var(--muted); font-size: 12px; }
+.scores strong { color: var(--text); font-size: 22px; font-weight: 500; font-variant-numeric: tabular-nums; margin-left: 9px; }
+.scores .speed { align-self: center; font-size: 10px; opacity: .7; white-space: nowrap; }
+.speed output { margin-left: 5px; font-variant-numeric: tabular-nums; }
+.arena-shell { position: relative; overflow: hidden; isolation: isolate; flex: 1; min-height: 0; border: 1px solid #ffffff0d; border-radius: 8px; }
+canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; }
+.controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 24px; padding: 14px 0 0; color: var(--muted); font-size: 10px; }
+.controls b { font-weight: 500; color: var(--text); }
+button { font: inherit; cursor: pointer; border: 1px solid #ffffff20; background: var(--page); color: var(--accent); border-radius: 6px; padding: 10px 25px; }
+button:hover { border-color: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; z-index: 3; background: #00000015; }
+.overlay[hidden], [hidden] { display: none; }
+.overlay-content { text-align: center; }
+h2 { font-size: 20px; font-weight: 500; margin: 0 0 18px; }
+.toast { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); color: var(--accent); font-size: 12px; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 4; }
+.toast.visible { opacity: 1; }
+.touch-controls { display: none; }
+@media (max-width: 600px) {
+  #app { padding: 12px; }
+  .scores { padding-bottom: 12px; font-size: 11px; }
+  .scores strong { font-size: 20px; }
+  .scores { gap: 10px; }
+  .controls { gap: 8px 14px; font-size: 9px; padding-top: 12px; }
+}
+@media (pointer: coarse) {
+  .touch-controls { display: flex; position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 4; justify-content: space-between; pointer-events: none; }
+  .touch-controls button { width: 45px; height: 42px; padding: 0; background: #ffffff09; backdrop-filter: blur(12px); font-size: 23px; touch-action: none; pointer-events: auto; }
+  .touch-controls button.pressed { background: #ffffff22; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

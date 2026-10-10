@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101c20" />
+    <meta name="description" content="Continuous-motion snake with shifting color palettes." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Radial Snake</title>
+  </head>
+  <body>
+    <main id="app">
+      <div class="scores" aria-label="Scoreboard">
+        <span>Score <strong id="score">000</strong></span>
+        <span class="speed">Speed <output id="speed">1.00×</output></span>
+        <span>High score <strong id="best">000</strong></span>
+      </div>
+      <section class="arena-shell" aria-label="Snake game">
+        <canvas id="game" aria-label="Snake playing field" role="img"></canvas>
+        <div id="overlay" class="overlay">
+          <div class="overlay-content">
+            <h2 id="overlay-title" hidden></h2>
+            <button id="play">Play</button>
+          </div>
+        </div>
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+        <div class="touch-controls" aria-label="Touch controls">
+          <button data-control="left" aria-label="Turn left">↶</button>
+          <button data-control="up" aria-label="Increase speed">↑</button>
+          <button data-control="down" aria-label="Decrease speed">↓</button>
+          <button data-control="right" aria-label="Turn right">↷</button>
+        </div>
+      </section>
+      <div class="controls" aria-label="Controls">
+        <span><b>A / D</b> or <b>← / →</b> turn</span>
+        <span><b>W / S</b> or <b>↑ / ↓</b> speed</span>
+        <span><b>Space</b> play</span>
+        <span><b>P</b> pause</span>
+        <span><b>M</b> sound</span>
+      </div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
