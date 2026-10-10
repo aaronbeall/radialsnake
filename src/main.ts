@@ -288,4 +288,29 @@ requestAnimationFrame(frame);
 // Development-only handle for exercising real gameplay and HUD transitions in the browser.
 if (import.meta.env.DEV) {
   Object.assign(window, { __radial: { game, start, handleEvent, state: () => state } });
+  const record = document.createElement('button');
+  record.textContent = 'Record'; record.style.cssText = 'padding:0 8px;font-size:10px';
+  document.querySelector('.controls')!.append(record);
+  let recorder: MediaRecorder | undefined;
+  record.addEventListener('click', () => {
+    if (recorder?.state === 'recording') { recorder.stop(); return; }
+    const stream = canvas.captureStream(30);
+    const chunks: Blob[] = [];
+    const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find(type => MediaRecorder.isTypeSupported(type));
+    recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), videoBitsPerSecond: 6_000_000 });
+    recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+    recorder.onstop = async () => {
+      const recording = new Blob(chunks, { type: recorder!.mimeType });
+      stream.getTracks().forEach(track => track.stop());
+      record.disabled = true; record.textContent = 'Saving…';
+      try {
+        const response = await fetch('/__recording', { method: 'POST', body: recording });
+        if (!response.ok) throw new Error('Unable to save recording');
+        if (!(await response.json()).saved) throw new Error('Recording was not saved');
+        toast('Recording saved', 4);
+      } catch { toast('Recording could not be saved', 6); }
+      record.disabled = false; record.textContent = 'Record';
+    };
+    recorder.start(); record.textContent = 'Stop recording';
+  });
 }
