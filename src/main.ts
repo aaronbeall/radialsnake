@@ -1,5 +1,5 @@
 import './style.css';
-import { SnakeGame, FRUITS, WIDTH, HEIGHT, wrap, type Controls, type GameEvent, type Point, type FruitKind } from './game';
+import { SnakeGame, FRUITS, fruitScale, WIDTH, HEIGHT, wrap, type Controls, type GameEvent, type Point, type FruitKind } from './game';
 import { AmbientMusic } from './music';
 import { PALETTES, type Palette } from './palettes';
 
@@ -83,6 +83,66 @@ function fruitChime(kind: FruitKind): void {
 function toast(message: string, seconds = 2.8): void {
   const el = $('toast'); el.textContent = message; el.classList.add('visible'); toastUntil = elapsed + seconds;
 }
+const collected = new Set<FruitKind>();
+try {
+  const saved: unknown = JSON.parse(localStorage.getItem('radialsnake.fruits') || '[]');
+  if (Array.isArray(saved)) for (const kind of saved) {
+    if (FRUITS.some(fruit => fruit.kind === kind)) collected.add(kind as FruitKind);
+  }
+} catch { /* A corrupt or unavailable store must not interrupt gameplay. */ }
+const fruitNames: Record<FruitKind, string> = {
+  apple: 'Apple', banana: 'Banana', strawberry: 'Strawberry', grapes: 'Grapes',
+  pineapple: 'Pineapple', watermelon: 'Watermelon', star: 'Rainbow star fruit',
+};
+const unlockQueue: FruitKind[] = [];
+let collectionUntil = 0;
+function collectFruit(kind: FruitKind): void {
+  if (collected.has(kind)) return;
+  collected.add(kind);
+  try { localStorage.setItem('radialsnake.fruits', JSON.stringify([...collected])); } catch { /* Keep discoveries for this session. */ }
+  unlockQueue.push(kind); updateBottomRoster();
+}
+function createFruitSlot(kind: FruitKind, highlighted?: FruitKind): HTMLDivElement {
+    const slot = document.createElement('div');
+    slot.className = `fruit-slot${collected.has(kind) ? '' : ' locked'}${kind === highlighted ? ' new-fruit' : ''}`;
+    slot.setAttribute('aria-label', collected.has(kind) ? fruitNames[kind] : 'Undiscovered fruit');
+    if (collected.has(kind)) {
+      const icon = document.createElement('canvas'); icon.width = icon.height = 80;
+      const ink = icon.getContext('2d')!; ink.scale(2,2);
+      drawApple(20,20,0,kind,1,ink);
+      const image = document.createElement('img'); image.src = icon.toDataURL(); image.alt = ''; slot.append(image);
+    } else {
+      const mystery = document.createElement('span'); mystery.className = 'fruit-mystery'; mystery.textContent = '?'; slot.append(mystery);
+    }
+    if (kind === highlighted && !reducedMotion) for (let i=0;i<10;i++) {
+      const spark = document.createElement('i'); spark.className = 'unlock-spark';
+      const angle = i * Math.PI * 2 / 10;
+      spark.style.setProperty('--dx', `${Math.cos(angle)*(22+Math.random()*16)}px`);
+      spark.style.setProperty('--dy', `${Math.sin(angle)*(22+Math.random()*16)}px`);
+      spark.style.setProperty('--delay', `${i%3*.14}s`); slot.append(spark);
+    }
+    return slot;
+}
+function updateBottomRoster(): void {
+  const roster = $('collection-indicator');
+  roster.replaceChildren(...FRUITS.map(({ kind }) => createFruitSlot(kind)));
+}
+function updateCollectionToast(): void {
+  if (collectionUntil && elapsed < collectionUntil) return;
+  const container = $('collection-toast');
+  const unlocked = unlockQueue.shift();
+  if (!unlocked) {
+    if (collectionUntil) { container.classList.remove('visible'); collectionUntil = 0; }
+    return;
+  }
+  container.replaceChildren();
+  const title = document.createElement('div'); title.className = 'collection-title';
+  title.textContent = `${fruitNames[unlocked]} discovered!`; container.append(title);
+  const roster = document.createElement('div'); roster.className = 'fruit-roster';
+  for (const { kind } of FRUITS) roster.append(createFruitSlot(kind, unlocked));
+  container.append(roster); container.classList.add('visible'); collectionUntil = elapsed + 4.5;
+}
+updateBottomRoster();
 function burst(x: number, y: number, color: string, count = 24, power = 1, heading?: number): void {
   if (reducedMotion) count = Math.min(8, count);
   for (let i = 0; i < count && particles.length < 220; i++) {
@@ -102,7 +162,7 @@ function syncStats(): void {
 const handleEvent = (event: GameEvent): void => {
   if (event.type === 'apple') {
     burst(event.x, event.y, PALETTES[paletteIndex].apple, 24, 1, game.angle);
-    fruitChime(event.kind); syncStats();
+    fruitChime(event.kind); syncStats(); collectFruit(event.kind);
     if (game.scoringEnabled && game.score > best) {
       best = game.score; bestText.textContent = String(best).padStart(3, '0');
       try { localStorage.setItem('radialsnake.best', String(best)); } catch { /* Gameplay still works without persistence. */ }
@@ -242,94 +302,94 @@ function drawSnake(): void {
     }
   }
 }
-function drawApple(x: number, y: number, phase: number, kind: FruitKind): void {
+function drawApple(x: number, y: number, phase: number, kind: FruitKind, size = 1, ink: CanvasRenderingContext2D = ctx): void {
   const appearance = kind === 'pineapple' ? 'watermelon' : kind === 'watermelon' ? 'pineapple' : kind;
-  ctx.save(); ctx.translate(x, y);
+  ink.save(); ink.translate(x, y); ink.scale(size, size);
   const pulse = 1 + (reducedMotion ? 0 : Math.sin(elapsed * 2.3 + phase) * .055);
-  const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, 44);
+  const glow = ink.createRadialGradient(0, 0, 2, 0, 0, 44);
   glow.addColorStop(0, rgb(colors.apple, .17)); glow.addColorStop(1, rgb(colors.apple, 0));
-  ctx.fillStyle = glow; ctx.fillRect(-44, -44, 88, 88);
-  ctx.strokeStyle = rgb(colors.apple, .14); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, 23 * pulse, 0, Math.PI * 2); ctx.stroke();
-  ctx.scale(pulse, pulse); ctx.shadowBlur = 13; ctx.shadowColor = rgb(colors.apple, .5);
-  const grad = ctx.createLinearGradient(-7, -8, 7, 9); grad.addColorStop(0, rgb(colors.highlight)); grad.addColorStop(.4, rgb(colors.apple)); grad.addColorStop(1, rgb(colors.apple, .75));
-  ctx.fillStyle = grad;
+  ink.fillStyle = glow; ink.fillRect(-44, -44, 88, 88);
+  ink.strokeStyle = rgb(colors.apple, .14); ink.lineWidth = 1; ink.beginPath(); ink.arc(0, 0, 23 * pulse, 0, Math.PI * 2); ink.stroke();
+  ink.scale(pulse, pulse); ink.shadowBlur = 13; ink.shadowColor = rgb(colors.apple, .5);
+  const grad = ink.createLinearGradient(-7, -8, 7, 9); grad.addColorStop(0, rgb(colors.highlight)); grad.addColorStop(.4, rgb(colors.apple)); grad.addColorStop(1, rgb(colors.apple, .75));
+  ink.fillStyle = grad;
   if (appearance === 'apple') {
-    ctx.beginPath(); ctx.moveTo(0, -6); ctx.bezierCurveTo(-13, -15, -15, 4, -5, 9); ctx.bezierCurveTo(-2, 11, -1, 8, 0, 9); ctx.bezierCurveTo(8, 14, 16, -8, 6, -9); ctx.bezierCurveTo(3, -10, 1, -7, 0, -6); ctx.fill();
+    ink.beginPath(); ink.moveTo(0, -6); ink.bezierCurveTo(-13, -15, -15, 4, -5, 9); ink.bezierCurveTo(-2, 11, -1, 8, 0, 9); ink.bezierCurveTo(8, 14, 16, -8, 6, -9); ink.bezierCurveTo(3, -10, 1, -7, 0, -6); ink.fill();
   } else if (appearance === 'banana') {
-    ctx.save(); ctx.rotate(-.35);
+    ink.save(); ink.rotate(-.35);
     // A plump curved peel, tapered ends, a stem, and a soft ridge rather than a thin crescent.
-    ctx.beginPath(); ctx.moveTo(-10, -9);
-    ctx.bezierCurveTo(-9, -2, -1, 4, 10, -4);
-    ctx.quadraticCurveTo(12, -6, 13, -3);
-    ctx.bezierCurveTo(10, 10, -6, 15, -12, 2);
-    ctx.quadraticCurveTo(-15, -5, -10, -9); ctx.closePath(); ctx.fill();
-    ctx.shadowBlur = 0; ctx.strokeStyle = rgb(colors.highlight, .65); ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.moveTo(-10,-5); ctx.bezierCurveTo(-7,7,3,9,10,0); ctx.stroke();
-    ctx.strokeStyle = rgb(colors.background, .4); ctx.lineWidth = .7;
-    ctx.beginPath(); ctx.moveTo(-10,0); ctx.bezierCurveTo(-5,10,4,10,11,1); ctx.stroke();
-    ctx.strokeStyle = rgb(colors.apple); ctx.lineWidth = 3; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(-10,-8); ctx.lineTo(-11,-12); ctx.stroke();
-    ctx.fillStyle = rgb(colors.background, .65);
-    ctx.beginPath(); ctx.ellipse(-11,-12,1.7,1,.25,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(12,-3,1,1.5,.5,0,Math.PI*2); ctx.fill(); ctx.restore();
+    ink.beginPath(); ink.moveTo(-10, -9);
+    ink.bezierCurveTo(-9, -2, -1, 4, 10, -4);
+    ink.quadraticCurveTo(12, -6, 13, -3);
+    ink.bezierCurveTo(10, 10, -6, 15, -12, 2);
+    ink.quadraticCurveTo(-15, -5, -10, -9); ink.closePath(); ink.fill();
+    ink.shadowBlur = 0; ink.strokeStyle = rgb(colors.highlight, .65); ink.lineWidth = 1.2;
+    ink.beginPath(); ink.moveTo(-10,-5); ink.bezierCurveTo(-7,7,3,9,10,0); ink.stroke();
+    ink.strokeStyle = rgb(colors.background, .4); ink.lineWidth = .7;
+    ink.beginPath(); ink.moveTo(-10,0); ink.bezierCurveTo(-5,10,4,10,11,1); ink.stroke();
+    ink.strokeStyle = rgb(colors.apple); ink.lineWidth = 3; ink.lineCap = 'round';
+    ink.beginPath(); ink.moveTo(-10,-8); ink.lineTo(-11,-12); ink.stroke();
+    ink.fillStyle = rgb(colors.background, .65);
+    ink.beginPath(); ink.ellipse(-11,-12,1.7,1,.25,0,Math.PI*2); ink.fill();
+    ink.beginPath(); ink.ellipse(12,-3,1,1.5,.5,0,Math.PI*2); ink.fill(); ink.restore();
   } else if (appearance === 'strawberry') {
-    ctx.beginPath(); ctx.moveTo(-7,-7);
-    ctx.bezierCurveTo(-12,-3,-8,7,-3,11);
-    ctx.quadraticCurveTo(0,14,3,11);
-    ctx.bezierCurveTo(8,7,12,-3,7,-7); ctx.closePath(); ctx.fill();
-    ctx.save(); ctx.clip(); ctx.shadowBlur = 0;
-    ctx.strokeStyle = rgb(colors.background,.22); ctx.lineWidth = .55;
-    ctx.fillStyle = rgb(colors.highlight,.16);
+    ink.beginPath(); ink.moveTo(-7,-7);
+    ink.bezierCurveTo(-12,-3,-8,7,-3,11);
+    ink.quadraticCurveTo(0,14,3,11);
+    ink.bezierCurveTo(8,7,12,-3,7,-7); ink.closePath(); ink.fill();
+    ink.save(); ink.clip(); ink.shadowBlur = 0;
+    ink.strokeStyle = rgb(colors.background,.22); ink.lineWidth = .55;
+    ink.fillStyle = rgb(colors.highlight,.16);
     // Small overlapping drupelets sit on a solid, rounded cone instead of separate berries.
     for (let row=0;row<6;row++) {
       const y=-6+row*3.2, count=[5,6,5,4,3,2][row];
       for (let i=0;i<count;i++) {
         const x=(i-(count-1)/2)*3.1;
-        ctx.beginPath(); ctx.arc(x,y,1.9,0,Math.PI*2); ctx.fill(); ctx.stroke();
+        ink.beginPath(); ink.arc(x,y,1.9,0,Math.PI*2); ink.fill(); ink.stroke();
       }
     }
-    ctx.restore(); ctx.shadowBlur = 0;
-    ctx.fillStyle = rgb(colors.highlight,.65);
-    ctx.beginPath(); ctx.moveTo(-8,-7);ctx.lineTo(-4,-10);ctx.lineTo(-2,-8);ctx.lineTo(0,-12);ctx.lineTo(2,-8);ctx.lineTo(5,-10);ctx.lineTo(8,-7);ctx.closePath();ctx.fill();
+    ink.restore(); ink.shadowBlur = 0;
+    ink.fillStyle = rgb(colors.highlight,.65);
+    ink.beginPath(); ink.moveTo(-8,-7);ink.lineTo(-4,-10);ink.lineTo(-2,-8);ink.lineTo(0,-12);ink.lineTo(2,-8);ink.lineTo(5,-10);ink.lineTo(8,-7);ink.closePath();ink.fill();
   } else if (appearance === 'grapes') {
-    ctx.shadowBlur = 0;
+    ink.shadowBlur = 0;
     for (const [x,y] of [[-5,-5],[5,-5],[-7,3],[3,3],[0,10]]) {
-      ctx.beginPath(); ctx.arc(x,y,4.5,0,Math.PI*2); ctx.fill();
-      ctx.strokeStyle = rgb(colors.background,.3);ctx.lineWidth=.7;ctx.stroke();
+      ink.beginPath(); ink.arc(x,y,4.5,0,Math.PI*2); ink.fill();
+      ink.strokeStyle = rgb(colors.background,.3);ink.lineWidth=.7;ink.stroke();
     }
   } else if (appearance === 'pineapple') {
-    ctx.beginPath(); ctx.ellipse(0, 2, 8, 11, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.save(); ctx.clip(); ctx.shadowBlur = 0;
-    ctx.strokeStyle = rgb(colors.background, .3); ctx.lineWidth = .8;
+    ink.beginPath(); ink.ellipse(0, 2, 8, 11, 0, 0, Math.PI * 2); ink.fill();
+    ink.save(); ink.clip(); ink.shadowBlur = 0;
+    ink.strokeStyle = rgb(colors.background, .3); ink.lineWidth = .8;
     for (let i = -18; i <= 18; i += 6) {
-      ctx.beginPath(); ctx.moveTo(-10, i); ctx.lineTo(10, i + 18); ctx.moveTo(10, i); ctx.lineTo(-10, i + 18); ctx.stroke();
+      ink.beginPath(); ink.moveTo(-10, i); ink.lineTo(10, i + 18); ink.moveTo(10, i); ink.lineTo(-10, i + 18); ink.stroke();
     }
-    ctx.restore();
-    ctx.fillStyle = rgb(colors.highlight); ctx.beginPath(); ctx.moveTo(-6,-7); ctx.lineTo(-9,-16); ctx.lineTo(-2,-11); ctx.lineTo(0,-19); ctx.lineTo(3,-11); ctx.lineTo(9,-16); ctx.lineTo(6,-7); ctx.fill();
+    ink.restore();
+    ink.fillStyle = rgb(colors.highlight); ink.beginPath(); ink.moveTo(-6,-7); ink.lineTo(-9,-16); ink.lineTo(-2,-11); ink.lineTo(0,-19); ink.lineTo(3,-11); ink.lineTo(9,-16); ink.lineTo(6,-7); ink.fill();
   } else if (appearance === 'watermelon') {
-    ctx.beginPath(); ctx.moveTo(-12,-6); ctx.lineTo(12,-6); ctx.arc(0,-6,12,0,Math.PI); ctx.closePath(); ctx.fill();
-    ctx.shadowBlur = 0; ctx.strokeStyle = rgb(colors.highlight); ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.arc(0,-6,12,0,Math.PI); ctx.stroke();
-    ctx.fillStyle = rgb(colors.background, .7);
-    for (const [x,y] of [[-6,-2],[0,2],[6,-2]]) { ctx.beginPath(); ctx.ellipse(x,y,1,1.6,0,0,Math.PI*2); ctx.fill(); }
+    ink.beginPath(); ink.moveTo(-12,-6); ink.lineTo(12,-6); ink.arc(0,-6,12,0,Math.PI); ink.closePath(); ink.fill();
+    ink.shadowBlur = 0; ink.strokeStyle = rgb(colors.highlight); ink.lineWidth = 2.5;
+    ink.beginPath(); ink.arc(0,-6,12,0,Math.PI); ink.stroke();
+    ink.fillStyle = rgb(colors.background, .7);
+    for (const [x,y] of [[-6,-2],[0,2],[6,-2]]) { ink.beginPath(); ink.ellipse(x,y,1,1.6,0,0,Math.PI*2); ink.fill(); }
   } else {
-    const rainbow = ctx.createLinearGradient(-12,-12,12,12);
+    const rainbow = ink.createLinearGradient(-12,-12,12,12);
     ['#f2a6ba','#efc68e','#e4df9e','#a4d8c4','#a5c7ed','#c5a9e8'].forEach((color,i)=>rainbow.addColorStop(i/5,color));
-    ctx.fillStyle = rainbow; ctx.shadowColor = '#dcc8ef';
-    ctx.beginPath();
+    ink.fillStyle = rainbow; ink.shadowColor = '#dcc8ef';
+    ink.beginPath();
     for (let i=0;i<10;i++) {
       const angle=-Math.PI/2+i*Math.PI/5, radius=i%2 ? 5.5 : 13;
       const x=Math.cos(angle)*radius,y=Math.sin(angle)*radius;
-      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+      if(i===0)ink.moveTo(x,y);else ink.lineTo(x,y);
     }
-    ctx.closePath();ctx.fill();
+    ink.closePath();ink.fill();
   }
-  ctx.shadowBlur = 0;
+  ink.shadowBlur = 0;
   if (appearance === 'apple' || appearance === 'grapes') {
-    ctx.strokeStyle = rgb(colors.apple); ctx.lineWidth = 1.7; ctx.beginPath(); ctx.moveTo(0,-7); ctx.quadraticCurveTo(-1,-13,3,-15); ctx.stroke();
-    ctx.fillStyle = rgb(colors.highlight,.7); ctx.beginPath();ctx.ellipse(6,-13,4,1.9,-.45,0,Math.PI*2);ctx.fill();
+    ink.strokeStyle = rgb(colors.apple); ink.lineWidth = 1.7; ink.beginPath(); ink.moveTo(0,-7); ink.quadraticCurveTo(-1,-13,3,-15); ink.stroke();
+    ink.fillStyle = rgb(colors.highlight,.7); ink.beginPath();ink.ellipse(6,-13,4,1.9,-.45,0,Math.PI*2);ink.fill();
   }
-  ctx.restore();
+  ink.restore();
 }
 function render(dt: number): void {
   deathTint += ((state === 'over' ? .55 : 0) - deathTint) * (1 - Math.exp(-dt * 5));
@@ -340,7 +400,7 @@ function render(dt: number): void {
   bg.addColorStop(0, rgb(colors.snake, .055)); bg.addColorStop(1, '#00000035'); ctx.fillStyle = bg; ctx.fillRect(0, 0, WIDTH, HEIGHT);
   ctx.fillStyle = rgb(colors.snake, .12);
   for (let y = 34; y < HEIGHT; y += 34) for (let x = 34; x < WIDTH; x += 34) { ctx.beginPath(); ctx.arc(x, y, .75, 0, Math.PI * 2); ctx.fill(); }
-  for (const apple of game.apples) drawApple(apple.x, apple.y, apple.phase, apple.kind);
+  for (const apple of game.apples) drawApple(apple.x, apple.y, apple.phase, apple.kind, fruitScale(apple.age));
   drawSnake();
   const animate = state !== 'paused';
   const decay = Math.exp(-dt * burstDrag);
@@ -399,6 +459,7 @@ function frame(time: number): void {
     if (speed !== displayedSpeed) { speedText.textContent = speed; displayedSpeed = speed; }
     nextSpeedUpdate = elapsed + .1;
   }
+  updateCollectionToast();
   if (toastUntil && elapsed > toastUntil) { $('toast').classList.remove('visible'); toastUntil = 0; }
   requestAnimationFrame(frame);
 }
@@ -407,29 +468,4 @@ requestAnimationFrame(frame);
 // Development-only handle for exercising real gameplay and HUD transitions in the browser.
 if (import.meta.env.DEV) {
   Object.assign(window, { __radial: { game, start, handleEvent, state: () => state } });
-  const record = document.createElement('button');
-  record.textContent = 'Record'; record.style.cssText = 'padding:0 8px;font-size:10px';
-  document.querySelector('.controls')!.append(record);
-  let recorder: MediaRecorder | undefined;
-  record.addEventListener('click', () => {
-    if (recorder?.state === 'recording') { recorder.stop(); return; }
-    const stream = canvas.captureStream(30);
-    const chunks: Blob[] = [];
-    const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find(type => MediaRecorder.isTypeSupported(type));
-    recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), videoBitsPerSecond: 6_000_000 });
-    recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
-    recorder.onstop = async () => {
-      const recording = new Blob(chunks, { type: recorder!.mimeType });
-      stream.getTracks().forEach(track => track.stop());
-      record.disabled = true; record.textContent = 'Saving…';
-      try {
-        const response = await fetch('/__recording', { method: 'POST', body: recording });
-        if (!response.ok) throw new Error('Unable to save recording');
-        if (!(await response.json()).saved) throw new Error('Recording was not saved');
-        toast('Recording saved', 4);
-      } catch { toast('Recording could not be saved', 6); }
-      record.disabled = false; record.textContent = 'Record';
-    };
-    recorder.start(); record.textContent = 'Stop recording';
-  });
 }

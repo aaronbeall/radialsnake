@@ -3,6 +3,11 @@ export const HEIGHT = 680;
 export const HEAD_RADIUS = 10;
 export const BODY_RADIUS = 8;
 export const APPLE_RADIUS = 9;
+export const FRUIT_LIFETIME = 10;
+export function fruitScale(age: number): number {
+  const progress = Math.min(1, Math.max(0, age / FRUIT_LIFETIME));
+  return .18 + .82 * (1 - Math.expm1(progress * 4) / Math.expm1(4));
+}
 const SPACING = 6;
 const TURN_RATE = 2.65;
 export interface Point { x: number; y: number }
@@ -24,7 +29,7 @@ export function chooseFruit(random: number): FruitKind {
   }
   return 'star';
 }
-export interface Apple extends Point { phase: number; kind: FruitKind }
+export interface Apple extends Point { phase: number; kind: FruitKind; age: number }
 export type GameEvent = { type: 'apple'; x: number; y: number; kind: FruitKind; points: number } | { type: 'palette'; level: number } | { type: 'death'; x: number; y: number };
 export const wrap = (value: number, size: number) => ((value % size) + size) % size;
 export const torusDelta = (value: number, size: number) => wrap(value + size / 2, size) - size / 2;
@@ -111,7 +116,12 @@ export class SnakeGame {
     }
     for (let i = 0; i < this.apples.length; i++) {
       const apple = this.apples[i];
-      if (torusDistance(this.head, apple) < HEAD_RADIUS + APPLE_RADIUS) {
+      apple.age += dt;
+      if (apple.age >= FRUIT_LIFETIME) {
+        this.apples[i] = this.spawnApple();
+        continue;
+      }
+      if (torusDistance(this.head, apple) < HEAD_RADIUS + APPLE_RADIUS * fruitScale(apple.age)) {
         const points = this.scoringEnabled ? FRUITS.find(fruit => fruit.kind === apple.kind)!.points : 0;
         this.eaten++; this.score += points; this.length += 28;
         emit({ type: 'apple', x: apple.x, y: apple.y, kind: apple.kind, points });
@@ -140,7 +150,7 @@ export class SnakeGame {
     if (index > 40) this.trail.splice(0, index - 40);
   }
   private spawnApple(kind: FruitKind = chooseFruit(this.random())): Apple {
-    const apple: Apple = { x: 0, y: 0, phase: this.random() * Math.PI * 2, kind };
+    const apple: Apple = { x: 0, y: 0, phase: this.random() * Math.PI * 2, kind, age: 0 };
     for (let attempt = 0; attempt < 120; attempt++) {
       apple.x = 70 + this.random() * (WIDTH - 140);
       apple.y = 90 + this.random() * (HEIGHT - 180);

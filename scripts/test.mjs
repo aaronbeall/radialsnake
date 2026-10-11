@@ -8,7 +8,7 @@ import ts from 'typescript';
 const dir = mkdtempSync(join(tmpdir(), 'radialsnake-test-'));
 const source = readFileSync(new URL('../src/game.ts', import.meta.url), 'utf8');
 writeFileSync(join(dir, 'game.mjs'), ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText);
-const { SnakeGame, WIDTH, HEIGHT, torusDistance, FRUITS, chooseFruit } = await import(pathToFileURL(join(dir, 'game.mjs')).href);
+const { SnakeGame, WIDTH, HEIGHT, torusDistance, FRUITS, chooseFruit, fruitScale, FRUIT_LIFETIME } = await import(pathToFileURL(join(dir, 'game.mjs')).href);
 after(() => rmSync(dir, { recursive: true, force: true }));
 const idle = { left: false, right: false, up: false, down: false };
 function fresh() { const g = new SnakeGame(); g.apples.length = 0; return g; }
@@ -31,7 +31,7 @@ test('opposite turning inputs cancel; left and right turn continuously', () => {
 });
 test('five head-eaten apples grow the body, score, and emit one palette change', () => {
   const g = fresh(), events = [];
-  for (let i = 0; i < 5; i++) { g.apples = [{ ...g.head, phase: 0, kind: 'apple' }]; g.step(1 / 120, idle, e => events.push(e)); }
+  for (let i = 0; i < 5; i++) { g.apples = [{ ...g.head, phase: 0, age: 0, kind: 'apple' }]; g.step(1 / 120, idle, e => events.push(e)); }
   assert.equal(g.score, 50); assert.equal(g.eaten, 5); assert.equal(g.length, 380); assert.equal(g.level, 1);
   assert.equal(events.filter(e => e.type === 'palette').length, 1); assert.equal(events.filter(e => e.type === 'apple').length, 5);
   assert.ok(g.cruiseSpeed > 155);
@@ -70,7 +70,7 @@ test('every fruit awards its points while counting once for growth and progress'
   const g = fresh(), events = [];
   for (const fruit of FRUITS) {
     const score = g.score, eaten = g.eaten, length = g.length;
-    g.apples = [{ ...g.head, phase: 0, kind: fruit.kind }];
+    g.apples = [{ ...g.head, phase: 0, age: 0, kind: fruit.kind }];
     g.step(1 / 120, idle, e => events.push(e));
     assert.equal(g.score - score, fruit.points);
     assert.equal(g.eaten - eaten, 1); assert.equal(g.length - length, 28);
@@ -86,12 +86,36 @@ test('test fruit freezes score for the run but retains growth and progress; rese
   g.spawnTestFruit('star');
   assert.equal(g.apples.at(-1).kind, 'star'); assert.equal(g.scoringEnabled, false);
   for (let i = 0; i < 5; i++) {
-    g.apples = [{ ...g.head, phase: 0, kind: i ? 'apple' : 'star' }];
+    g.apples = [{ ...g.head, phase: 0, age: 0, kind: i ? 'apple' : 'star' }];
     g.step(1 / 120, idle, e => events.push(e));
   }
   assert.equal(g.score, 50); assert.equal(g.eaten, 5); assert.equal(g.level, 1); assert.equal(g.length, 380);
   assert.ok(events.filter(e => e.type === 'apple').every(e => e.points === 0));
   g.reset(); assert.equal(g.scoringEnabled, true);
-  g.apples = [{ ...g.head, phase: 0, kind: 'banana' }]; g.step(1 / 120, idle, () => {});
+  g.apples = [{ ...g.head, phase: 0, age: 0, kind: 'banana' }]; g.step(1 / 120, idle, () => {});
   assert.equal(g.score, 20);
+});
+
+test('fruit shrink accelerates near the ten-second expiry', () => {
+  assert.equal(fruitScale(0), 1);
+  assert.ok(fruitScale(5) > .9);
+  assert.ok(fruitScale(9) < .5);
+  assert.ok(Math.abs(fruitScale(FRUIT_LIFETIME) - .18) < 1e-9);
+  assert.ok(fruitScale(8) - fruitScale(9) > fruitScale(1) - fruitScale(2));
+});
+test('expired fruit is replaced without score, growth, or collection events', () => {
+  const g = fresh(), events = [];
+  const expired = { ...g.head, kind: 'star', phase: 0, age: FRUIT_LIFETIME - .001 };
+  g.apples = [expired];
+  g.step(1 / 120, idle, e => events.push(e));
+  assert.notEqual(g.apples[0], expired); assert.equal(g.apples[0].age, 0);
+  assert.equal(g.score, 0); assert.equal(g.eaten, 0); assert.equal(g.length, 240); assert.equal(events.length, 0);
+});
+test('fruit pickup radius shrinks with its visible size', () => {
+  for (const age of [0, 9.9]) {
+    const g = fresh(); g.angle = 0;
+    g.apples = [{ x: g.head.x + 16, y: g.head.y, phase: 0, kind: 'apple', age }];
+    g.step(1 / 120, idle, () => {});
+    assert.equal(g.eaten, age === 0 ? 1 : 0);
+  }
 });
