@@ -8,8 +8,24 @@ const TURN_RATE = 2.65;
 export interface Point { x: number; y: number }
 interface TrailPoint extends Point { distance: number }
 export interface Controls { left: boolean; right: boolean; up: boolean; down: boolean }
-export interface Apple extends Point { phase: number }
-export type GameEvent = { type: 'apple'; x: number; y: number } | { type: 'palette'; level: number } | { type: 'death'; x: number; y: number };
+export const FRUITS = [
+  { kind: 'apple', points: 10 }, { kind: 'banana', points: 20 },
+  { kind: 'strawberry', points: 35 }, { kind: 'grapes', points: 60 },
+  { kind: 'pineapple', points: 100 }, { kind: 'watermelon', points: 150 },
+  { kind: 'star', points: 300 },
+] as const;
+export type FruitKind = typeof FRUITS[number]['kind'];
+export function chooseFruit(random: number): FruitKind {
+  const total = FRUITS.reduce((sum, _, i) => sum + 4 ** -i, 0);
+  let roll = random * total;
+  for (let i = 0; i < FRUITS.length; i++) {
+    roll -= 4 ** -i;
+    if (roll < 0) return FRUITS[i].kind;
+  }
+  return 'star';
+}
+export interface Apple extends Point { phase: number; kind: FruitKind }
+export type GameEvent = { type: 'apple'; x: number; y: number; kind: FruitKind; points: number } | { type: 'palette'; level: number } | { type: 'death'; x: number; y: number };
 export const wrap = (value: number, size: number) => ((value % size) + size) % size;
 export const torusDelta = (value: number, size: number) => wrap(value + size / 2, size) - size / 2;
 export function torusDistance(a: Point, b: Point): number {
@@ -29,6 +45,7 @@ export class SnakeGame {
   distance = 0;
   length = 240;
   score = 0;
+  scoringEnabled = true;
   eaten = 0;
   level = 0;
   speed = 155;
@@ -39,6 +56,13 @@ export class SnakeGame {
   private boost = 0;
   constructor(private readonly random = Math.random) { this.reset(); }
   get cruiseSpeed(): number { return 155 * Math.pow(1.045, this.level); }
+  spawnTestFruit(kind: FruitKind): void {
+    if (!this.alive) return;
+    this.scoringEnabled = false;
+    const fruit = this.spawnApple(kind);
+    if (this.apples.length >= 32) this.apples.pop();
+    this.apples.push(fruit);
+  }
   resize(width: number): void {
     const scale = width / WIDTH;
     WIDTH = width;
@@ -59,7 +83,7 @@ export class SnakeGame {
   reset(): void {
     this.head.x = WIDTH * .58; this.head.y = HEIGHT * .53;
     this.angle = -.25; this.distance = 0; this.length = 240;
-    this.score = 0; this.eaten = 0; this.level = 0; this.boost = 0; this.speed = this.cruiseSpeed; this.alive = true;
+    this.score = 0; this.scoringEnabled = true; this.eaten = 0; this.level = 0; this.boost = 0; this.speed = this.cruiseSpeed; this.alive = true;
     this.trail.length = 0;
     for (let d = -this.length - 20; d <= 0; d += 3) {
       this.trail.push({ x: this.head.x + Math.cos(this.angle) * d, y: this.head.y + Math.sin(this.angle) * d, distance: d });
@@ -88,8 +112,9 @@ export class SnakeGame {
     for (let i = 0; i < this.apples.length; i++) {
       const apple = this.apples[i];
       if (torusDistance(this.head, apple) < HEAD_RADIUS + APPLE_RADIUS) {
-        this.eaten++; this.score += 10; this.length += 28;
-        emit({ type: 'apple', x: apple.x, y: apple.y });
+        const points = this.scoringEnabled ? FRUITS.find(fruit => fruit.kind === apple.kind)!.points : 0;
+        this.eaten++; this.score += points; this.length += 28;
+        emit({ type: 'apple', x: apple.x, y: apple.y, kind: apple.kind, points });
         this.apples[i] = this.spawnApple();
         if (this.eaten % 5 === 0) { this.level++; emit({ type: 'palette', level: this.level }); }
       }
@@ -114,8 +139,8 @@ export class SnakeGame {
     // Keep extra history so growth reveals a real trailing path, rather than a new kink.
     if (index > 40) this.trail.splice(0, index - 40);
   }
-  private spawnApple(): Apple {
-    let apple: Apple = { x: 0, y: 0, phase: this.random() * Math.PI * 2 };
+  private spawnApple(kind: FruitKind = chooseFruit(this.random())): Apple {
+    const apple: Apple = { x: 0, y: 0, phase: this.random() * Math.PI * 2, kind };
     for (let attempt = 0; attempt < 120; attempt++) {
       apple.x = 70 + this.random() * (WIDTH - 140);
       apple.y = 90 + this.random() * (HEIGHT - 180);

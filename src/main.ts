@@ -1,5 +1,6 @@
 import './style.css';
-import { SnakeGame, WIDTH, HEIGHT, wrap, type Controls, type GameEvent, type Point } from './game';
+import { SnakeGame, FRUITS, WIDTH, HEIGHT, wrap, type Controls, type GameEvent, type Point, type FruitKind } from './game';
+import { AmbientMusic } from './music';
 import { PALETTES, type Palette } from './palettes';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -15,6 +16,7 @@ const game = new SnakeGame();
 const controls: Controls = { left: false, right: false, up: false, down: false };
 const pressed = new Set<string>();
 const touch = new Set<keyof Controls>();
+let testSlashes = 0, lastTestKey = 0;
 type State = 'ready' | 'playing' | 'paused' | 'over';
 let state: State = 'ready', paletteIndex = 0, elapsed = 0, accumulator = 0, lastTime = 0;
 let best = 0, startingBest = 0, recordCelebrated = false;
@@ -22,6 +24,15 @@ try { best = Math.max(0, Number(localStorage.getItem('radialsnake.best')) || 0);
 bestText.textContent = String(best).padStart(3, '0');
 let toastUntil = 0, screenFlash = 0;
 let soundEnabled = true, audio: AudioContext | undefined;
+let music: AmbientMusic | undefined, deathTint = 0;
+function syncMusic(): void {
+  if (soundEnabled) {
+    audio ??= new AudioContext(); music ??= new AmbientMusic(audio); music.start();
+  } else music?.stop();
+}
+// Browser autoplay rules require an initial interaction to unlock audio.
+window.addEventListener('pointerdown', syncMusic, { once: true });
+window.addEventListener('keydown', syncMusic, { once: true });
 interface Particle extends Point { vx: number; vy: number; life: number; maxLife: number; size: number; color: string }
 const particles: Particle[] = [];
 interface Ripple extends Point { radius: number; speed: number; life: number; maxLife: number; color: string }
@@ -45,16 +56,29 @@ function applyPalette(palette: Palette, immediate = false): void {
   if (immediate) for (const key of colorKeys) Object.assign(colors[key], targetColors[key]);
 }
 applyPalette(PALETTES[0], true);
-function tone(frequency: number, delay = 0, duration = .12): void {
+function tone(frequency: number, delay = 0, duration = .12, volume = .055): void {
   if (!soundEnabled) return;
   audio ??= new AudioContext();
   const oscillator = audio.createOscillator(), gain = audio.createGain();
   oscillator.type = 'sine'; oscillator.frequency.value = frequency;
   gain.gain.setValueAtTime(0, audio.currentTime + delay);
-  gain.gain.linearRampToValueAtTime(.055, audio.currentTime + delay + .015);
+  gain.gain.linearRampToValueAtTime(volume, audio.currentTime + delay + .015);
   gain.gain.exponentialRampToValueAtTime(.001, audio.currentTime + delay + duration);
   oscillator.connect(gain); gain.connect(audio.destination);
   oscillator.start(audio.currentTime + delay); oscillator.stop(audio.currentTime + delay + duration + .01);
+  oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
+}
+const fruitChimes: Record<FruitKind, readonly number[]> = {
+  apple: [440, 660],
+  banana: [330, 440, 554.37],
+  strawberry: [783.99, 659.25, 880],
+  grapes: [523.25, 659.25, 783.99, 1046.5],
+  pineapple: [587.33, 880, 1174.66],
+  watermelon: [261.63, 392, 523.25],
+  star: [523.25, 659.25, 783.99, 987.77, 1174.66, 1567.98],
+};
+function fruitChime(kind: FruitKind): void {
+  fruitChimes[kind].forEach((frequency, i) => tone(frequency, i * .075, kind === 'star' ? .42 : .22, .038));
 }
 function toast(message: string, seconds = 2.8): void {
   const el = $('toast'); el.textContent = message; el.classList.add('visible'); toastUntil = elapsed + seconds;
@@ -78,8 +102,8 @@ function syncStats(): void {
 const handleEvent = (event: GameEvent): void => {
   if (event.type === 'apple') {
     burst(event.x, event.y, PALETTES[paletteIndex].apple, 24, 1, game.angle);
-    tone(440, 0); tone(660, .07); syncStats();
-    if (game.score > best) {
+    fruitChime(event.kind); syncStats();
+    if (game.scoringEnabled && game.score > best) {
       best = game.score; bestText.textContent = String(best).padStart(3, '0');
       try { localStorage.setItem('radialsnake.best', String(best)); } catch { /* Gameplay still works without persistence. */ }
       if (!recordCelebrated && game.score > startingBest) {
@@ -94,7 +118,7 @@ const handleEvent = (event: GameEvent): void => {
     applyPalette(PALETTES[paletteIndex]);
     tone(330, 0, .3); tone(495, .12, .3);
   } else {
-    state = 'over'; clearControls(); burst(event.x, event.y, PALETTES[paletteIndex].snake, 55, 1.6);
+    state = 'over'; syncMusic(); clearControls(); burst(event.x, event.y, PALETTES[paletteIndex].snake, 55, 1.6);
     tone(180, 0, .3); tone(120, .1, .45);
     overlayTitle.hidden = false; overlayTitle.textContent = 'Game over';
     play.textContent = 'Play again'; overlay.hidden = false;
@@ -102,23 +126,23 @@ const handleEvent = (event: GameEvent): void => {
 };
 function start(): void {
   clearControls(); game.reset(); syncStats(); particles.length = 0; ripples.length = 0;
-  startingBest = best; recordCelebrated = false; accumulator = 0; screenFlash = 0;
+  startingBest = best; recordCelebrated = false; accumulator = 0; screenFlash = 0; deathTint = 0;
   $('toast').classList.remove('visible'); toastUntil = 0;
-  state = 'playing'; overlay.hidden = true;
+  state = 'playing'; overlay.hidden = true; syncMusic();
   tone(330); tone(440, .08);
 }
 function togglePause(): void {
   if (state === 'playing') {
-    state = 'paused'; clearControls();
+    state = 'paused'; syncMusic(); clearControls();
     overlayTitle.hidden = false; overlayTitle.textContent = 'Paused';
     play.textContent = 'Resume'; overlay.hidden = false;
   } else if (state === 'paused') {
-    state = 'playing'; overlay.hidden = true; accumulator = 0;
+    state = 'playing'; overlay.hidden = true; accumulator = 0; syncMusic();
   }
 }
 play.addEventListener('click', () => { if (state === 'paused') togglePause(); else start(); });
 function toggleSound(): void {
-  soundEnabled = !soundEnabled;
+  soundEnabled = !soundEnabled; syncMusic();
   if (soundEnabled) { audio ??= new AudioContext(); void audio.resume(); tone(440); }
 }
 canvas.addEventListener('click', () => { if (state === 'playing') togglePause(); });
@@ -130,6 +154,7 @@ function updateControls(): void {
   }
 }
 function clearControls(): void {
+  testSlashes = 0;
   pressed.clear(); touch.clear(); updateControls();
   document.querySelectorAll('.touch-controls button').forEach(button => button.classList.remove('pressed'));
 }
@@ -138,6 +163,18 @@ window.addEventListener('keydown', event => {
   if (keyMap[event.code] || ['Space', 'KeyP', 'Escape'].includes(event.code)) event.preventDefault();
   if (keyMap[event.code]) { pressed.add(event.code); updateControls(); }
   if (event.repeat) return;
+  const now = performance.now();
+  if (now - lastTestKey > 1500) testSlashes = 0;
+  if (event.key === '/' && (state === 'playing' || state === 'paused')) {
+    testSlashes = Math.min(5, testSlashes + 1); lastTestKey = now;
+  } else {
+    if (testSlashes === 5 && /^[1-7]$/.test(event.key) && (state === 'playing' || state === 'paused')) {
+      event.preventDefault();
+      game.spawnTestFruit(FRUITS[Number(event.key) - 1].kind);
+      toast('Test fruit spawned · scoring disabled', 2);
+    }
+    testSlashes = 0;
+  }
   if (event.code === 'Space') { if (state === 'paused') togglePause(); else if (state !== 'playing') start(); }
   if (event.code === 'KeyP' || event.code === 'Escape') togglePause();
   if (event.code === 'KeyM') toggleSound();
@@ -168,6 +205,12 @@ function smoothPath(points: Point[], reverse = false): void {
   ctx.lineTo(points[end].x, points[end].y);
 }
 function drawSnake(): void {
+  const tint = (color: RGB): RGB => ({
+    r: color.r + (colors.background.r - color.r) * deathTint,
+    g: color.g + (colors.background.g - color.g) * deathTint,
+    b: color.b + (colors.background.b - color.b) * deathTint,
+  });
+  const snakeInk = tint(colors.snake), highlightInk = tint(colors.highlight);
   const nodes = game.nodes, count = nodes.length;
   while (leftEdge.length < count) { leftEdge.push({ x: 0, y: 0 }); rightEdge.push({ x: 0, y: 0 }); }
   leftEdge.length = rightEdge.length = count;
@@ -184,14 +227,14 @@ function drawSnake(): void {
   for (let tx = Math.ceil((-maxX - 30) / WIDTH); tx <= Math.floor((WIDTH - minX + 30) / WIDTH); tx++) {
     for (let ty = Math.ceil((-maxY - 30) / HEIGHT); ty <= Math.floor((HEIGHT - minY + 30) / HEIGHT); ty++) {
       ctx.save(); ctx.translate(tx * WIDTH, ty * HEIGHT);
-      ctx.globalAlpha = state === 'over' ? .5 : 1;
-      ctx.shadowBlur = 23; ctx.shadowColor = rgb(colors.snake, .38);
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 23; ctx.shadowColor = rgb(snakeInk, .38);
       ctx.beginPath(); ctx.moveTo(leftEdge[0].x, leftEdge[0].y); smoothPath(leftEdge); smoothPath(rightEdge, true); ctx.closePath();
-      ctx.fillStyle = rgb(colors.snake); ctx.fill(); ctx.shadowBlur = 0;
-      ctx.strokeStyle = rgb(colors.highlight, .38); ctx.lineWidth = 1; ctx.beginPath(); smoothPath(leftEdge); ctx.stroke();
-      ctx.strokeStyle = rgb(colors.highlight, .2); ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(nodes[0].x, nodes[0].y); smoothPath(nodes); ctx.stroke();
+      ctx.fillStyle = rgb(snakeInk); ctx.fill(); ctx.shadowBlur = 0;
+      ctx.strokeStyle = rgb(highlightInk, .38); ctx.lineWidth = 1; ctx.beginPath(); smoothPath(leftEdge); ctx.stroke();
+      ctx.strokeStyle = rgb(highlightInk, .2); ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(nodes[0].x, nodes[0].y); smoothPath(nodes); ctx.stroke();
       ctx.save(); ctx.translate(game.head.x, game.head.y); ctx.rotate(game.angle);
-      const gradient = ctx.createRadialGradient(-2, -3, 1, 0, 0, 11); gradient.addColorStop(0, rgb(colors.highlight)); gradient.addColorStop(1, rgb(colors.snake));
+      const gradient = ctx.createRadialGradient(-2, -3, 1, 0, 0, 11); gradient.addColorStop(0, rgb(highlightInk)); gradient.addColorStop(1, rgb(snakeInk));
       ctx.fillStyle = gradient; ctx.beginPath(); ctx.ellipse(0, 0, 11, 9.6, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = rgb(colors.background, .9);
       for (const y of [-4.4, 4.4]) { ctx.beginPath(); ctx.ellipse(4.2, y, 1.5, 1.8, -.1, 0, Math.PI * 2); ctx.fill(); }
@@ -199,7 +242,8 @@ function drawSnake(): void {
     }
   }
 }
-function drawApple(x: number, y: number, phase: number): void {
+function drawApple(x: number, y: number, phase: number, kind: FruitKind): void {
+  const appearance = kind === 'pineapple' ? 'watermelon' : kind === 'watermelon' ? 'pineapple' : kind;
   ctx.save(); ctx.translate(x, y);
   const pulse = 1 + (reducedMotion ? 0 : Math.sin(elapsed * 2.3 + phase) * .055);
   const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, 44);
@@ -208,12 +252,87 @@ function drawApple(x: number, y: number, phase: number): void {
   ctx.strokeStyle = rgb(colors.apple, .14); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, 23 * pulse, 0, Math.PI * 2); ctx.stroke();
   ctx.scale(pulse, pulse); ctx.shadowBlur = 13; ctx.shadowColor = rgb(colors.apple, .5);
   const grad = ctx.createLinearGradient(-7, -8, 7, 9); grad.addColorStop(0, rgb(colors.highlight)); grad.addColorStop(.4, rgb(colors.apple)); grad.addColorStop(1, rgb(colors.apple, .75));
-  ctx.fillStyle = grad; ctx.beginPath(); ctx.moveTo(0, -6); ctx.bezierCurveTo(-13, -15, -15, 4, -5, 9); ctx.bezierCurveTo(-2, 11, -1, 8, 0, 9); ctx.bezierCurveTo(8, 14, 16, -8, 6, -9); ctx.bezierCurveTo(3, -10, 1, -7, 0, -6); ctx.fill();
-  ctx.shadowBlur = 0; ctx.strokeStyle = rgb(colors.apple); ctx.lineWidth = 1.7; ctx.beginPath(); ctx.moveTo(0, -7); ctx.quadraticCurveTo(-1, -13, 3, -15); ctx.stroke();
-  ctx.fillStyle = rgb(colors.highlight, .7); ctx.beginPath(); ctx.ellipse(6, -13, 4, 1.9, -.45, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#ffffff70'; ctx.beginPath(); ctx.ellipse(-5, -3, 1.5, 3, .3, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+  ctx.fillStyle = grad;
+  if (appearance === 'apple') {
+    ctx.beginPath(); ctx.moveTo(0, -6); ctx.bezierCurveTo(-13, -15, -15, 4, -5, 9); ctx.bezierCurveTo(-2, 11, -1, 8, 0, 9); ctx.bezierCurveTo(8, 14, 16, -8, 6, -9); ctx.bezierCurveTo(3, -10, 1, -7, 0, -6); ctx.fill();
+  } else if (appearance === 'banana') {
+    ctx.save(); ctx.rotate(-.35);
+    // A plump curved peel, tapered ends, a stem, and a soft ridge rather than a thin crescent.
+    ctx.beginPath(); ctx.moveTo(-10, -9);
+    ctx.bezierCurveTo(-9, -2, -1, 4, 10, -4);
+    ctx.quadraticCurveTo(12, -6, 13, -3);
+    ctx.bezierCurveTo(10, 10, -6, 15, -12, 2);
+    ctx.quadraticCurveTo(-15, -5, -10, -9); ctx.closePath(); ctx.fill();
+    ctx.shadowBlur = 0; ctx.strokeStyle = rgb(colors.highlight, .65); ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(-10,-5); ctx.bezierCurveTo(-7,7,3,9,10,0); ctx.stroke();
+    ctx.strokeStyle = rgb(colors.background, .4); ctx.lineWidth = .7;
+    ctx.beginPath(); ctx.moveTo(-10,0); ctx.bezierCurveTo(-5,10,4,10,11,1); ctx.stroke();
+    ctx.strokeStyle = rgb(colors.apple); ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-10,-8); ctx.lineTo(-11,-12); ctx.stroke();
+    ctx.fillStyle = rgb(colors.background, .65);
+    ctx.beginPath(); ctx.ellipse(-11,-12,1.7,1,.25,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(12,-3,1,1.5,.5,0,Math.PI*2); ctx.fill(); ctx.restore();
+  } else if (appearance === 'strawberry') {
+    ctx.beginPath(); ctx.moveTo(-7,-7);
+    ctx.bezierCurveTo(-12,-3,-8,7,-3,11);
+    ctx.quadraticCurveTo(0,14,3,11);
+    ctx.bezierCurveTo(8,7,12,-3,7,-7); ctx.closePath(); ctx.fill();
+    ctx.save(); ctx.clip(); ctx.shadowBlur = 0;
+    ctx.strokeStyle = rgb(colors.background,.22); ctx.lineWidth = .55;
+    ctx.fillStyle = rgb(colors.highlight,.16);
+    // Small overlapping drupelets sit on a solid, rounded cone instead of separate berries.
+    for (let row=0;row<6;row++) {
+      const y=-6+row*3.2, count=[5,6,5,4,3,2][row];
+      for (let i=0;i<count;i++) {
+        const x=(i-(count-1)/2)*3.1;
+        ctx.beginPath(); ctx.arc(x,y,1.9,0,Math.PI*2); ctx.fill(); ctx.stroke();
+      }
+    }
+    ctx.restore(); ctx.shadowBlur = 0;
+    ctx.fillStyle = rgb(colors.highlight,.65);
+    ctx.beginPath(); ctx.moveTo(-8,-7);ctx.lineTo(-4,-10);ctx.lineTo(-2,-8);ctx.lineTo(0,-12);ctx.lineTo(2,-8);ctx.lineTo(5,-10);ctx.lineTo(8,-7);ctx.closePath();ctx.fill();
+  } else if (appearance === 'grapes') {
+    ctx.shadowBlur = 0;
+    for (const [x,y] of [[-5,-5],[5,-5],[-7,3],[3,3],[0,10]]) {
+      ctx.beginPath(); ctx.arc(x,y,4.5,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle = rgb(colors.background,.3);ctx.lineWidth=.7;ctx.stroke();
+    }
+  } else if (appearance === 'pineapple') {
+    ctx.beginPath(); ctx.ellipse(0, 2, 8, 11, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.save(); ctx.clip(); ctx.shadowBlur = 0;
+    ctx.strokeStyle = rgb(colors.background, .3); ctx.lineWidth = .8;
+    for (let i = -18; i <= 18; i += 6) {
+      ctx.beginPath(); ctx.moveTo(-10, i); ctx.lineTo(10, i + 18); ctx.moveTo(10, i); ctx.lineTo(-10, i + 18); ctx.stroke();
+    }
+    ctx.restore();
+    ctx.fillStyle = rgb(colors.highlight); ctx.beginPath(); ctx.moveTo(-6,-7); ctx.lineTo(-9,-16); ctx.lineTo(-2,-11); ctx.lineTo(0,-19); ctx.lineTo(3,-11); ctx.lineTo(9,-16); ctx.lineTo(6,-7); ctx.fill();
+  } else if (appearance === 'watermelon') {
+    ctx.beginPath(); ctx.moveTo(-12,-6); ctx.lineTo(12,-6); ctx.arc(0,-6,12,0,Math.PI); ctx.closePath(); ctx.fill();
+    ctx.shadowBlur = 0; ctx.strokeStyle = rgb(colors.highlight); ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(0,-6,12,0,Math.PI); ctx.stroke();
+    ctx.fillStyle = rgb(colors.background, .7);
+    for (const [x,y] of [[-6,-2],[0,2],[6,-2]]) { ctx.beginPath(); ctx.ellipse(x,y,1,1.6,0,0,Math.PI*2); ctx.fill(); }
+  } else {
+    const rainbow = ctx.createLinearGradient(-12,-12,12,12);
+    ['#f2a6ba','#efc68e','#e4df9e','#a4d8c4','#a5c7ed','#c5a9e8'].forEach((color,i)=>rainbow.addColorStop(i/5,color));
+    ctx.fillStyle = rainbow; ctx.shadowColor = '#dcc8ef';
+    ctx.beginPath();
+    for (let i=0;i<10;i++) {
+      const angle=-Math.PI/2+i*Math.PI/5, radius=i%2 ? 5.5 : 13;
+      const x=Math.cos(angle)*radius,y=Math.sin(angle)*radius;
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.closePath();ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+  if (appearance === 'apple' || appearance === 'grapes') {
+    ctx.strokeStyle = rgb(colors.apple); ctx.lineWidth = 1.7; ctx.beginPath(); ctx.moveTo(0,-7); ctx.quadraticCurveTo(-1,-13,3,-15); ctx.stroke();
+    ctx.fillStyle = rgb(colors.highlight,.7); ctx.beginPath();ctx.ellipse(6,-13,4,1.9,-.45,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
 }
 function render(dt: number): void {
+  deathTint += ((state === 'over' ? .55 : 0) - deathTint) * (1 - Math.exp(-dt * 5));
   ctx.setTransform(canvas.width / WIDTH, 0, 0, canvas.height / HEIGHT, 0, 0);
   for (const key of colorKeys) { const c = colors[key], target = targetColors[key], t = 1 - Math.exp(-dt * 2.3); c.r += (target.r - c.r) * t; c.g += (target.g - c.g) * t; c.b += (target.b - c.b) * t; }
   ctx.fillStyle = rgb(colors.background); ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -221,7 +340,7 @@ function render(dt: number): void {
   bg.addColorStop(0, rgb(colors.snake, .055)); bg.addColorStop(1, '#00000035'); ctx.fillStyle = bg; ctx.fillRect(0, 0, WIDTH, HEIGHT);
   ctx.fillStyle = rgb(colors.snake, .12);
   for (let y = 34; y < HEIGHT; y += 34) for (let x = 34; x < WIDTH; x += 34) { ctx.beginPath(); ctx.arc(x, y, .75, 0, Math.PI * 2); ctx.fill(); }
-  for (const apple of game.apples) drawApple(apple.x, apple.y, apple.phase);
+  for (const apple of game.apples) drawApple(apple.x, apple.y, apple.phase, apple.kind);
   drawSnake();
   const animate = state !== 'paused';
   const decay = Math.exp(-dt * burstDrag);

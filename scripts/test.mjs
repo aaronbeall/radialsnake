@@ -8,7 +8,7 @@ import ts from 'typescript';
 const dir = mkdtempSync(join(tmpdir(), 'radialsnake-test-'));
 const source = readFileSync(new URL('../src/game.ts', import.meta.url), 'utf8');
 writeFileSync(join(dir, 'game.mjs'), ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText);
-const { SnakeGame, WIDTH, HEIGHT, torusDistance } = await import(pathToFileURL(join(dir, 'game.mjs')).href);
+const { SnakeGame, WIDTH, HEIGHT, torusDistance, FRUITS, chooseFruit } = await import(pathToFileURL(join(dir, 'game.mjs')).href);
 after(() => rmSync(dir, { recursive: true, force: true }));
 const idle = { left: false, right: false, up: false, down: false };
 function fresh() { const g = new SnakeGame(); g.apples.length = 0; return g; }
@@ -31,7 +31,7 @@ test('opposite turning inputs cancel; left and right turn continuously', () => {
 });
 test('five head-eaten apples grow the body, score, and emit one palette change', () => {
   const g = fresh(), events = [];
-  for (let i = 0; i < 5; i++) { g.apples = [{ ...g.head, phase: 0 }]; g.step(1 / 120, idle, e => events.push(e)); }
+  for (let i = 0; i < 5; i++) { g.apples = [{ ...g.head, phase: 0, kind: 'apple' }]; g.step(1 / 120, idle, e => events.push(e)); }
   assert.equal(g.score, 50); assert.equal(g.eaten, 5); assert.equal(g.length, 380); assert.equal(g.level, 1);
   assert.equal(events.filter(e => e.type === 'palette').length, 1); assert.equal(events.filter(e => e.type === 'apple').length, 5);
   assert.ok(g.cruiseSpeed > 155);
@@ -52,4 +52,46 @@ test('reset creates a fresh run with safe apple placement', () => {
   const g = fresh(); g.score = 50; g.length = 500; g.alive = false; g.reset();
   assert.equal(g.score, 0); assert.equal(g.length, 240); assert.equal(g.alive, true); assert.equal(g.apples.length, 3);
   for (const a of g.apples) { assert.ok(torusDistance(a, g.head) >= 160); assert.ok(g.nodes.every(n => torusDistance(a, n) >= 35)); }
+});
+
+test('rarity has exact fourfold tiers and an extremely rare star', () => {
+  const total = FRUITS.reduce((sum, _, i) => sum + 4 ** -i, 0);
+  let cumulative = 0;
+  for (let i = 0; i < FRUITS.length; i++) {
+    const width = 4 ** -i / total;
+    assert.equal(chooseFruit(cumulative + width / 2), FRUITS[i].kind);
+    cumulative += width;
+  }
+  assert.equal(chooseFruit(0), 'apple');
+  assert.equal(chooseFruit(1 - Number.EPSILON), 'star');
+  assert.ok(4 ** -6 / total < .0002);
+});
+test('every fruit awards its points while counting once for growth and progress', () => {
+  const g = fresh(), events = [];
+  for (const fruit of FRUITS) {
+    const score = g.score, eaten = g.eaten, length = g.length;
+    g.apples = [{ ...g.head, phase: 0, kind: fruit.kind }];
+    g.step(1 / 120, idle, e => events.push(e));
+    assert.equal(g.score - score, fruit.points);
+    assert.equal(g.eaten - eaten, 1); assert.equal(g.length - length, 28);
+    assert.equal(events.filter(e => e.type === 'apple').at(-1).kind, fruit.kind);
+  }
+  assert.equal(g.level, 1);
+  assert.equal(events.filter(e => e.type === 'palette').length, 1);
+});
+
+test('test fruit freezes score for the run but retains growth and progress; reset restores scoring', () => {
+  const g = fresh(), events = [];
+  g.score = 50;
+  g.spawnTestFruit('star');
+  assert.equal(g.apples.at(-1).kind, 'star'); assert.equal(g.scoringEnabled, false);
+  for (let i = 0; i < 5; i++) {
+    g.apples = [{ ...g.head, phase: 0, kind: i ? 'apple' : 'star' }];
+    g.step(1 / 120, idle, e => events.push(e));
+  }
+  assert.equal(g.score, 50); assert.equal(g.eaten, 5); assert.equal(g.level, 1); assert.equal(g.length, 380);
+  assert.ok(events.filter(e => e.type === 'apple').every(e => e.points === 0));
+  g.reset(); assert.equal(g.scoringEnabled, true);
+  g.apples = [{ ...g.head, phase: 0, kind: 'banana' }]; g.step(1 / 120, idle, () => {});
+  assert.equal(g.score, 20);
 });
