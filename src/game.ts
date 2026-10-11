@@ -16,7 +16,7 @@ export interface Controls { left: boolean; right: boolean; up: boolean; down: bo
 export const FRUITS = [
   { kind: 'apple', points: 10 }, { kind: 'banana', points: 20 },
   { kind: 'strawberry', points: 35 }, { kind: 'grapes', points: 60 },
-  { kind: 'pineapple', points: 100 }, { kind: 'watermelon', points: 150 },
+  { kind: 'watermelon', points: 100 }, { kind: 'pineapple', points: 150 },
   { kind: 'star', points: 300 },
 ] as const;
 export type FruitKind = typeof FRUITS[number]['kind'];

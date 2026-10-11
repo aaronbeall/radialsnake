@@ -73,8 +73,8 @@ const fruitChimes: Record<FruitKind, readonly number[]> = {
   banana: [330, 440, 554.37],
   strawberry: [783.99, 659.25, 880],
   grapes: [523.25, 659.25, 783.99, 1046.5],
-  pineapple: [587.33, 880, 1174.66],
-  watermelon: [261.63, 392, 523.25],
+  watermelon: [587.33, 880, 1174.66],
+  pineapple: [261.63, 392, 523.25],
   star: [523.25, 659.25, 783.99, 987.77, 1174.66, 1567.98],
 };
 function fruitChime(kind: FruitKind): void {
@@ -303,7 +303,7 @@ function drawSnake(): void {
   }
 }
 function drawApple(x: number, y: number, phase: number, kind: FruitKind, size = 1, ink: CanvasRenderingContext2D = ctx): void {
-  const appearance = kind === 'pineapple' ? 'watermelon' : kind === 'watermelon' ? 'pineapple' : kind;
+  const appearance = kind;
   ink.save(); ink.translate(x, y); ink.scale(size, size);
   const pulse = 1 + (reducedMotion ? 0 : Math.sin(elapsed * 2.3 + phase) * .055);
   const glow = ink.createRadialGradient(0, 0, 2, 0, 0, 44);
